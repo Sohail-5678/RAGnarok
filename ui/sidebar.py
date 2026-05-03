@@ -57,46 +57,74 @@ def render_sidebar():
 
 
 def _render_api_keys_section():
-    """Render API key input section."""
+    """Render API key input section with secure default and user overrides."""
     st.markdown("### 🔑 API Keys")
-    st.caption("Enter your API keys. Groq is the default if no key is provided.")
+    st.caption("🔒 Default: Ameer's secure keys. Optional: Provide your own keys below.")
 
     # Initialize API keys in session state
     if "api_keys" not in st.session_state:
         st.session_state.api_keys = {
-            "groq": os.environ.get("GROQ_API_KEY", ""),
+            "groq": "",
             "openai": "",
             "gemini": "",
             "claude": "",
         }
+    
+    if "use_default_keys" not in st.session_state:
+        st.session_state.use_default_keys = True
+
+    # Show default status
+    st.markdown("#### 📌 Default Provider")
+    
+    default_groq = os.environ.get("GROQ_API_KEY", "").strip()
+    if default_groq:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("⚡ **Ameer's GROQ API (Llama 3.3 70B)**")
+            st.caption("🟢 ACTIVE: Using secure default key")
+        with col2:
+            if st.button("🔄 Override", key="toggle_default"):
+                st.session_state.use_default_keys = not st.session_state.use_default_keys
+        
+        if not st.session_state.use_default_keys:
+            st.info("💡 Tip: Leave fields empty to use default keys again")
+
+    st.markdown("#### 🔐 Your Custom Keys (Optional)")
+    st.caption("Leave empty to use defaults • Passwords are masked for security")
+
+    # Show input fields only if user opts to override
+    show_inputs = not st.session_state.use_default_keys or not default_groq
 
     for provider_id, info in LLM_PROVIDERS.items():
-        key = st.text_input(
-            f"{info['icon']} {info['name']}",
-            value=st.session_state.api_keys.get(provider_id, ""),
-            type="password",
-            key=f"api_key_{provider_id}",
-            placeholder=f"Enter {info['name'].split('(')[0].strip()} API key...",
-        )
-        st.session_state.api_keys[provider_id] = key
+        if show_inputs:
+            key = st.text_input(
+                f"{info['icon']} {info['name']}",
+                value=st.session_state.api_keys.get(provider_id, ""),
+                type="password",
+                key=f"api_key_{provider_id}",
+                placeholder=f"Enter {info['name'].split('(')[0].strip()} API key (optional)...",
+            )
+            st.session_state.api_keys[provider_id] = key
 
     # Show which providers are active
-    active_providers = []
+    active_status = []
     for pid, info in LLM_PROVIDERS.items():
-        key = st.session_state.api_keys.get(pid, "").strip()
-        if not key:
-            key = os.environ.get(info["env_key"], "").strip()
-        if key:
-            active_providers.append(f"{info['icon']} {pid.capitalize()}")
+        user_key = st.session_state.api_keys.get(pid, "").strip()
+        default_key = os.environ.get(info["env_key"], "").strip()
+        
+        if user_key:
+            active_status.append(f"👤 {info['icon']} {pid.capitalize()} (Your key)")
+        elif default_key:
+            active_status.append(f"🔒 {info['icon']} {pid.capitalize()} (Ameer's key)")
 
-    if active_providers:
+    if active_status:
         st.markdown(
-            render_status_badge(f"Active: {', '.join(active_providers)}", "active"),
+            render_status_badge(f"Active: {' • '.join(active_status)}", "active"),
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            render_status_badge("No API keys configured", "warning"),
+            render_status_badge("⚠️ No API keys configured", "warning"),
             unsafe_allow_html=True,
         )
 
