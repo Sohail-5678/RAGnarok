@@ -57,8 +57,13 @@ def get_glass_css() -> str:
     /* ── Hide Streamlit Defaults ───────────────────────── */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden !important;}
     .stDeployButton {display: none !important;}
+    
+    /* Keep header for sidebar toggle, but hide other parts */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        border: none !important;
+    }
 
     /* ── Sidebar ───────────────────────────────────────── */
     section[data-testid="stSidebar"] {
