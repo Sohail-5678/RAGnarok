@@ -72,31 +72,30 @@ def _render_api_keys_section():
     
     if "use_default_keys" not in st.session_state:
         st.session_state.use_default_keys = True
+    
+    if "selected_provider" not in st.session_state:
+        st.session_state.selected_provider = "groq"
 
     # Show default status
     st.markdown("#### 📌 Default Provider")
     
     default_groq = os.environ.get("GROQ_API_KEY", "").strip()
     if default_groq:
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([4, 1])
         with col1:
             st.markdown("⚡ **Ameer's GROQ API (Llama 3.3 70B)**")
             st.caption("🟢 ACTIVE: Using secure default key")
         with col2:
-            if st.button("🔄 Override", key="toggle_default"):
+            if st.button("Use Own API Key", key="toggle_default", use_container_width=True):
                 st.session_state.use_default_keys = not st.session_state.use_default_keys
-        
-        if not st.session_state.use_default_keys:
-            st.info("💡 Tip: Leave fields empty to use default keys again")
+                st.rerun()
 
-    st.markdown("#### 🔐 Your Custom Keys (Optional)")
-    st.caption("Leave empty to use defaults • Passwords are masked for security")
+    # Only show custom keys section if override is enabled
+    if not st.session_state.use_default_keys:
+        st.markdown("#### 🔐 Your Custom Keys (Optional)")
+        st.caption("Leave empty to use defaults • Passwords are masked for security")
 
-    # Show input fields only if user opts to override
-    show_inputs = not st.session_state.use_default_keys or not default_groq
-
-    for provider_id, info in LLM_PROVIDERS.items():
-        if show_inputs:
+        for provider_id, info in LLM_PROVIDERS.items():
             key = st.text_input(
                 f"{info['icon']} {info['name']}",
                 value=st.session_state.api_keys.get(provider_id, ""),
@@ -105,6 +104,24 @@ def _render_api_keys_section():
                 placeholder=f"Enter {info['name'].split('(')[0].strip()} API key (optional)...",
             )
             st.session_state.api_keys[provider_id] = key
+        
+        st.markdown("#### 🤖 Active Model")
+        provider_options = {
+            pid: f"{info['icon']} {info['name']}" for pid, info in LLM_PROVIDERS.items()
+        }
+
+        selected = st.selectbox(
+            "Select LLM Provider",
+            options=list(provider_options.keys()),
+            format_func=lambda x: provider_options[x],
+            index=list(provider_options.keys()).index(st.session_state.selected_provider),
+            key="provider_select",
+            label_visibility="collapsed",
+        )
+        st.session_state.selected_provider = selected
+    else:
+        # When using default, show status but no selection
+        st.session_state.selected_provider = "groq"
 
     # Show which providers are active
     active_status = []
@@ -127,25 +144,6 @@ def _render_api_keys_section():
             render_status_badge("⚠️ No API keys configured", "warning"),
             unsafe_allow_html=True,
         )
-
-    # LLM Selection
-    st.markdown("#### 🤖 Active Model")
-    provider_options = {
-        pid: f"{info['icon']} {info['name']}" for pid, info in LLM_PROVIDERS.items()
-    }
-
-    if "selected_provider" not in st.session_state:
-        st.session_state.selected_provider = "groq"
-
-    selected = st.selectbox(
-        "Select LLM Provider",
-        options=list(provider_options.keys()),
-        format_func=lambda x: provider_options[x],
-        index=list(provider_options.keys()).index(st.session_state.selected_provider),
-        key="provider_select",
-        label_visibility="collapsed",
-    )
-    st.session_state.selected_provider = selected
 
 
 def _render_upload_section():
