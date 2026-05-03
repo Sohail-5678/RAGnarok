@@ -81,14 +81,12 @@ def _render_api_keys_section():
     
     default_groq = os.environ.get("GROQ_API_KEY", "").strip()
     if default_groq:
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.markdown("⚡ **Ameer's GROQ API (Llama 3.3 70B)**")
-            st.caption("🟢 ACTIVE: Using secure default key")
-        with col2:
-            if st.button("Use Own API Key", key="toggle_default", use_container_width=True):
-                st.session_state.use_default_keys = not st.session_state.use_default_keys
-                st.rerun()
+        st.markdown("⚡ **Ameer's GROQ API (Llama 3.3 70B)**")
+        st.caption("🟢 ACTIVE: Using secure default key")
+        
+        if st.button("🔐 Use Own API Key", key="toggle_default"):
+            st.session_state.use_default_keys = not st.session_state.use_default_keys
+            st.rerun()
 
     # Only show custom keys section if override is enabled
     if not st.session_state.use_default_keys:

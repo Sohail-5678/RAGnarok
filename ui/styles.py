@@ -64,6 +64,13 @@ def get_glass_css() -> str:
         background: transparent !important;
         border: none !important;
     }
+    
+    /* Hide edit button */
+    button[kind="secondary"]:has-text("✎") {display: none !important;}
+    button[aria-label="Edit app"] {display: none !important;}
+    [data-testid="stToolbarActionButton"][aria-label*="edit"] {display: none !important;}
+    .toolbarIcon-3iYlPF button:nth-child(2) {display: none !important;}
+    button[title*="edit"] {display: none !important;}
 
     /* ── Sidebar ───────────────────────────────────────── */
     section[data-testid="stSidebar"] {
