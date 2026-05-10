@@ -52,6 +52,11 @@ def render_sidebar():
 
         st.markdown("---")
 
+        # ── Evaluation & Logging ──────────────────────────
+        _render_evaluation_section()
+
+        st.markdown("---")
+
         # ── Actions ───────────────────────────────────────
         _render_actions()
 
@@ -323,6 +328,118 @@ def _render_advanced_settings():
             key="select_modality",
             label_visibility="collapsed",
         )
+
+
+def _render_evaluation_section():
+    """Render the Evaluation & Logging expander."""
+    with st.expander("📊 Evaluation & Logging", expanded=False):
+        # ── Persistent query logging toggle ──
+        if "persist_queries" not in st.session_state:
+            st.session_state.persist_queries = False
+
+        st.session_state.persist_queries = st.checkbox(
+            "Persist queries to SQLite + JSONL",
+            value=st.session_state.persist_queries,
+            help=(
+                "When enabled, every query (with retrieved chunks, answer, "
+                "sources, latency, and config) is appended to "
+                "`evaluation/logs/`. Useful for building gold sets and "
+                "offline analysis."
+            ),
+            key="cb_persist_queries",
+        )
+
+        try:
+            from evaluation.logger import get_default_logger
+            logger = get_default_logger()
+            count = logger.count()
+            st.caption(f"📁 Logged queries: **{count}**")
+            st.caption(f"DB: `{logger.db_path}`")
+        except Exception:
+            st.caption("Logger unavailable.")
+
+        st.markdown("**Run Evaluation Harness**")
+        default_ds = "docs/examples/sample_dataset.jsonl"
+        ds_path = st.text_input(
+            "Dataset path (JSONL)",
+            value=default_ds,
+            key="eval_dataset_path",
+        )
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            run_judge = st.checkbox("LLM judge", value=True, key="eval_run_judge")
+        with col_b:
+            ab_mode = st.checkbox("A/B rerank", value=False, key="eval_ab_mode")
+
+        if st.button("🚀 Run Evaluation", use_container_width=True, key="btn_run_eval"):
+            _run_evaluation_from_sidebar(ds_path, run_judge, ab_mode)
+
+
+def _run_evaluation_from_sidebar(ds_path: str, run_judge: bool, ab_mode: bool):
+    """Execute the evaluation harness from the sidebar button."""
+    try:
+        from evaluation.harness import (
+            EvalConfig, run_evaluation, compare_configs,
+        )
+    except Exception as e:
+        st.error(f"Failed to load evaluation module: {e}")
+        return
+
+    if not os.path.exists(ds_path):
+        st.error(f"Dataset not found: {ds_path}")
+        return
+
+    progress = st.progress(0.0, text="Starting evaluation…")
+
+    def _cb(p: float, label: str):
+        try:
+            progress.progress(min(1.0, p), text=f"Evaluating: {label[:40]}")
+        except Exception:
+            pass
+
+    api_keys = st.session_state.get("api_keys", {})
+
+    try:
+        if ab_mode:
+            configs = [
+                EvalConfig(name="rerank_on", enable_reranking=True,
+                           run_llm_judge=run_judge),
+                EvalConfig(name="rerank_off", enable_reranking=False,
+                           run_llm_judge=run_judge),
+            ]
+            result = compare_configs(
+                dataset=ds_path,
+                configs=configs,
+                api_keys=api_keys,
+                output_dir="evaluation/reports",
+                progress_callback=_cb,
+            )
+            progress.progress(1.0, text="Done")
+            st.success("A/B comparison complete.")
+            st.markdown("**Comparison summary**")
+            st.json(result["comparison"])
+            st.caption("Full report: `evaluation/reports/comparison.md`")
+        else:
+            cfg = EvalConfig(name="sidebar_run", run_llm_judge=run_judge)
+            report = run_evaluation(
+                dataset=ds_path,
+                config=cfg,
+                api_keys=api_keys,
+                output_dir="evaluation/reports",
+                progress_callback=_cb,
+            )
+            progress.progress(1.0, text="Done")
+            st.success(
+                f"Evaluated {report['aggregate']['num_examples']} examples "
+                f"({report['aggregate']['num_errors']} errors)"
+            )
+            st.json(report["aggregate"])
+            st.caption(
+                f"Full report: `evaluation/reports/{cfg.name}_report.md`"
+            )
+    except Exception as e:
+        st.error(f"Evaluation failed: {str(e)[:300]}")
 
 
 def _render_actions():

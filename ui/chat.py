@@ -1,6 +1,7 @@
 """
 Chat interface: message rendering, streaming, and context display.
 """
+import time
 import streamlit as st
 from typing import List, Dict, Any, Optional
 
@@ -9,6 +10,10 @@ from ui.styles import render_source_tag
 from core.retrieval import hybrid_search
 from core.generation import generate_response
 from utils.helpers import format_context_for_llm
+from evaluation.logger import (
+    QueryLogEntry, get_default_logger, new_session_id,
+)
+from evaluation.generation_metrics import compute_generation_metrics
 
 
 def render_chat():
@@ -17,33 +22,41 @@ def render_chat():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display existing messages
-    for msg in st.session_state.messages:
-        _render_message(msg)
+    # Display existing messages (with index + paired question for scoring).
+    for idx, msg in enumerate(st.session_state.messages):
+        paired_question = None
+        if msg.get("role") == "assistant" and idx > 0:
+            prev = st.session_state.messages[idx - 1]
+            if prev.get("role") == "user":
+                paired_question = prev.get("content", "")
+        _render_message(msg, idx, paired_question)
 
     # Chat input
     if prompt := st.chat_input("Ask anything about your uploaded documents...", key="chat_input"):
         # Add user message
         user_msg = {"role": "user", "content": prompt}
         st.session_state.messages.append(user_msg)
-        _render_message(user_msg)
+        _render_message(user_msg, len(st.session_state.messages) - 1, None)
 
         # Generate response
         with st.chat_message("assistant", avatar="🔮"):
             _generate_and_stream(prompt)
 
 
-def _render_message(msg: Dict[str, Any]):
-    """Render a single chat message."""
+def _render_message(msg: Dict[str, Any], idx: int = 0, paired_question: Optional[str] = None):
+    """Render a single chat message, plus inline scoring for assistant turns."""
     role = msg["role"]
     avatar = "👤" if role == "user" else "🔮"
 
     with st.chat_message(role, avatar=avatar):
         st.markdown(msg["content"])
 
-        # Render sources if available
-        if role == "assistant" and "sources" in msg:
-            _render_sources(msg["sources"])
+        # Render sources + scoring controls for assistant messages.
+        if role == "assistant":
+            if "sources" in msg:
+                _render_sources(msg["sources"])
+            if msg.get("retrieved") is not None and paired_question:
+                _render_score_controls(msg, idx, paired_question)
 
 
 def _generate_and_stream(prompt: str):
@@ -55,6 +68,12 @@ def _generate_and_stream(prompt: str):
     modality_filter = st.session_state.get("modality_filter", "all")
     dense_weight = st.session_state.get("dense_weight", 0.7)
     bm25_weight = st.session_state.get("bm25_weight", 0.3)
+
+    # ── Logging setup ─────────────────────────────────────
+    t_start = time.perf_counter()
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = new_session_id()
+    retrieved_for_log: List[Dict[str, Any]] = []
 
     # ── Retrieve relevant context ─────────────────────────
     context = ""
@@ -83,6 +102,17 @@ def _generate_and_stream(prompt: str):
                     st.write("Applied cross-encoder re-ranking ✓")
 
                 context = format_context_for_llm(results)
+                retrieved_for_log = [
+                    {
+                        "content": r.get("content", ""),
+                        "metadata": r.get("metadata", {}),
+                        "rerank_score": r.get("rerank_score"),
+                        "fusion_score": r.get("fusion_score"),
+                        "dense_similarity": r.get("dense_similarity"),
+                        "bm25_score": r.get("bm25_score"),
+                    }
+                    for r in results
+                ]
                 sources = [
                     {
                         "source": r.get("metadata", {}).get("source", "Unknown"),
@@ -136,11 +166,147 @@ def _generate_and_stream(prompt: str):
     assistant_msg = {
         "role": "assistant",
         "content": full_response,
+        # Persist the full retrieved chunks so the user can later click
+        # "📈 Score this answer" without re-running retrieval.
+        "retrieved": retrieved_for_log,
     }
     if sources:
         assistant_msg["sources"] = sources
 
     st.session_state.messages.append(assistant_msg)
+
+    # ── Persistent query log (opt-in) ─────────────────────
+    if st.session_state.get("persist_queries", False):
+        try:
+            latency_ms = (time.perf_counter() - t_start) * 1000.0
+            entry = QueryLogEntry(
+                query=prompt,
+                answer=full_response,
+                retrieved=retrieved_for_log,
+                sources=sources,
+                provider=provider,
+                config={
+                    "top_k_rerank": top_k,
+                    "dense_weight": dense_weight,
+                    "bm25_weight": bm25_weight,
+                    "enable_reranking": enable_reranking,
+                    "modality_filter": modality_filter,
+                },
+                latency_ms=latency_ms,
+                session_id=st.session_state.get("session_id", ""),
+            )
+            get_default_logger().log(entry)
+        except Exception:
+            # Never let logging break the chat experience.
+            pass
+
+    # Rerun so the freshly-saved message renders through ``_render_message``,
+    # which is what attaches the "📈 Score this answer" button.
+    st.rerun()
+
+
+def _render_score_controls(msg: Dict[str, Any], idx: int, question: str):
+    """
+    Render the inline "Score this answer" UI under an assistant message.
+
+    Runs three reference-free metrics on demand (no gold answer required):
+      * Faithfulness        — LLM-as-judge against retrieved context (0/1)
+      * Answer Relevancy    — LLM-as-judge against the question      (0/1)
+      * Citation coverage   — regex-based, deterministic
+
+    Results are cached on the message itself so re-renders are free.
+    """
+    # If already scored, just render the card.
+    if "scores" in msg:
+        _render_score_card(msg["scores"])
+        # Allow user to re-score if they want.
+        if st.button("🔄 Re-score", key=f"rescore_{idx}"):
+            msg.pop("scores", None)
+            st.rerun()
+        return
+
+    col_btn, col_hint = st.columns([1, 3])
+    with col_btn:
+        clicked = st.button("📈 Score this answer", key=f"score_{idx}")
+    with col_hint:
+        st.caption(
+            "Runs faithfulness + relevancy (LLM judge) and citation coverage on this answer."
+        )
+
+    if clicked:
+        api_keys = st.session_state.get("api_keys", {})
+        with st.spinner("Scoring with Groq LLM judge…"):
+            try:
+                scores = compute_generation_metrics(
+                    question=question,
+                    answer=msg.get("content", ""),
+                    retrieved_chunks=msg.get("retrieved", []),
+                    gold_answer=None,
+                    api_keys=api_keys,
+                    run_llm_judge=True,
+                    run_bertscore=False,
+                )
+            except Exception as e:
+                scores = {"error": f"Scoring failed: {str(e)[:200]}"}
+        msg["scores"] = scores
+        st.rerun()
+
+
+def _render_score_card(scores: Dict[str, Any]):
+    """Render the scoring results as a compact glass card."""
+    if scores.get("error"):
+        st.error(scores["error"])
+        return
+
+    def _badge(label: str, value, kind: Optional[str] = None) -> str:
+        """One badge: green for 1, amber for 0, grey for None/unknown."""
+        if value is None:
+            color, glyph = "#64748b", "—"
+        elif isinstance(value, (int, float)) and value >= 0.999:
+            color, glyph = "#10b981", "✓"
+        elif isinstance(value, (int, float)) and value <= 0.001:
+            color, glyph = "#f43f5e", "✗"
+        else:
+            color, glyph = "#f59e0b", f"{value:.2f}" if isinstance(value, float) else str(value)
+        return (
+            f"<div style='display:inline-flex;align-items:center;gap:0.4rem;"
+            f"padding:0.35rem 0.7rem;border-radius:20px;"
+            f"background:rgba(255,255,255,0.04);"
+            f"border:1px solid {color}55;color:{color};"
+            f"font-size:0.75rem;font-weight:600;margin:0.2rem;'>"
+            f"<span>{label}</span><span>{glyph}</span></div>"
+        )
+
+    faith = scores.get("faithfulness")
+    rel = scores.get("answer_relevancy")
+    cov = scores.get("coverage")
+    fake = scores.get("fake_citation_rate")
+    num_cit = int(scores.get("num_citations") or 0)
+
+    badges_html = (
+        "<div style='margin-top:0.7rem;padding:0.6rem 0.8rem;"
+        "background:rgba(255,255,255,0.03);"
+        "border:1px solid rgba(255,255,255,0.08);border-radius:12px;'>"
+        "<div style='font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;"
+        "color:#94a3b8;margin-bottom:0.4rem;'>📈 Answer Quality</div>"
+    )
+    badges_html += _badge("Faithfulness", faith)
+    badges_html += _badge("Relevancy", rel)
+    badges_html += _badge(f"Citations ({num_cit})", cov)
+    if fake is not None and fake > 0:
+        badges_html += _badge("Fake citations", 1.0 - fake)  # invert so low is good
+    badges_html += "</div>"
+    st.markdown(badges_html, unsafe_allow_html=True)
+
+    # Show judge reasoning in an expander for transparency.
+    faith_reason = scores.get("faithfulness_reason")
+    rel_reason = scores.get("answer_relevancy_reason")
+    if faith_reason or rel_reason:
+        with st.expander("Judge reasoning", expanded=False):
+            if faith_reason:
+                st.caption(f"**Faithfulness:** {faith_reason}")
+            if rel_reason:
+                st.caption(f"**Answer relevancy:** {rel_reason}")
 
 
 def _render_sources(sources: List[Dict[str, Any]]):

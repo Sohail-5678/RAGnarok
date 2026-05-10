@@ -37,6 +37,16 @@ EMBEDDING_BATCH_SIZE = 64
 # ─── Reranker Settings ────────────────────────────────────────────────
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+# ─── Vision Models (per-provider) ─────────────────────────────────────
+GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+GEMINI_VISION_MODEL = "gemini-2.0-flash"
+OPENAI_VISION_MODEL = "gpt-4o"
+
+# Max frames sent to a paid/rate-limited vision API per video
+# (sampled uniformly across the extracted frames to keep latency &
+#  rate-limit usage reasonable while still capturing the full timeline).
+MAX_VISION_FRAMES_PER_VIDEO = 24
+
 # ─── Supported File Types ─────────────────────────────────────────────
 SUPPORTED_DOCUMENTS = [".pdf", ".docx", ".txt", ".md", ".csv"]
 SUPPORTED_AUDIO = [".mp3", ".wav", ".m4a", ".ogg", ".flac"]

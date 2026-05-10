@@ -40,7 +40,7 @@ wheels/
 # Streamlit
 .streamlit/
 
-# Chroma DB (optional - keep if you want empty structure, remove if you don't)
+# Chroma DB
 chroma_db/
 *.sqlite3
 
@@ -48,3 +48,14 @@ chroma_db/
 temp/
 tmp/
 *.tmp
+
+# Evaluation artefacts (logs of user queries + per-run reports)
+evaluation/logs/
+evaluation/reports/
+
+# Pytest / mypy caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+

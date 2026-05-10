@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from config import (
     SUPPORTED_DOCUMENTS, SUPPORTED_AUDIO, SUPPORTED_VIDEO, SUPPORTED_IMAGES,
     DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP,
+    LLM_PROVIDERS, GROQ_VISION_MODEL,
 )
 from utils.chunking import semantic_chunk_text, Chunk, clean_text
 from utils.helpers import get_file_extension, save_uploaded_file, cleanup_temp_file
@@ -120,21 +121,95 @@ def describe_image_basic(file_path: str) -> str:
         return f"Image file: {Path(file_path).name}. [Unable to analyze: {str(e)[:100]}]"
 
 
+# ─── API Key Resolution ──────────────────────────────────────
+
+def resolve_api_keys(api_keys: Dict[str, str]) -> Dict[str, str]:
+    """
+    Merge user-provided session keys with environment-variable defaults so
+    that ingestion (vision / Whisper) can use the same fallback chain as
+    the LLM generation layer. User-provided keys take precedence.
+    """
+    resolved: Dict[str, str] = {}
+    for provider_id, info in LLM_PROVIDERS.items():
+        user_key = (api_keys.get(provider_id) or "").strip()
+        env_key = os.environ.get(info["env_key"], "").strip()
+        resolved[provider_id] = user_key or env_key
+    return resolved
+
+
+def _pick_vision_provider(keys: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    """Pick best available vision provider: Groq → Gemini → OpenAI."""
+    if keys.get("groq"):
+        return "groq", keys["groq"]
+    if keys.get("gemini"):
+        return "gemini", keys["gemini"]
+    if keys.get("openai"):
+        return "openai", keys["openai"]
+    return None, None
+
+
+def _pick_audio_provider(keys: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    """Pick best available Whisper provider: Groq → OpenAI."""
+    if keys.get("groq"):
+        return "groq", keys["groq"]
+    if keys.get("openai"):
+        return "openai", keys["openai"]
+    return None, None
+
+
 async def describe_image_with_vision(
     file_path: str,
     api_key: str,
     provider: str = "gemini",
 ) -> str:
-    """Describe an image using a vision model."""
+    """Describe an image using a vision model (Groq / Gemini / OpenAI)."""
     import base64
-    
+
+    if provider == "groq" and api_key:
+        try:
+            from groq import Groq
+
+            client = Groq(api_key=api_key)
+            with open(file_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+
+            ext = get_file_extension(file_path).lstrip(".")
+            mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+
+            response = client.chat.completions.create(
+                model=GROQ_VISION_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Describe this image in detail. Include: main subjects, "
+                                "colors, any visible text, setting/background, and notable "
+                                "details. Be factual and thorough; do not speculate."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        },
+                    ],
+                }],
+                temperature=0.1,
+                max_tokens=500,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return describe_image_basic(file_path) + f" [Vision failed: {str(e)[:100]}]"
+
     if provider == "gemini" and api_key:
         try:
             import google.generativeai as genai
             from PIL import Image
-            
+            from config import GEMINI_VISION_MODEL
+
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel(GEMINI_VISION_MODEL)
             
             img = Image.open(file_path)
             response = model.generate_content([
@@ -150,16 +225,17 @@ async def describe_image_with_vision(
     elif provider == "openai" and api_key:
         try:
             from openai import OpenAI
-            
+            from config import OPENAI_VISION_MODEL
+
             client = OpenAI(api_key=api_key)
             with open(file_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode('utf-8')
-            
+
             ext = get_file_extension(file_path).lstrip('.')
             mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
-            
+
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model=OPENAI_VISION_MODEL,
                 messages=[{
                     "role": "user",
                     "content": [
@@ -281,6 +357,10 @@ async def ingest_files_parallel(
     all_chunks: List[Chunk] = []
     total = len(files)
 
+    # Resolve keys once: user-provided session keys win, otherwise fall
+    # back to environment variables (e.g. the default GROQ_API_KEY).
+    keys = resolve_api_keys(api_keys or {})
+
     tasks = []
 
     for i, file_info in enumerate(files):
@@ -290,26 +370,31 @@ async def ingest_files_parallel(
 
         if ext in SUPPORTED_DOCUMENTS:
             tasks.append(("document", ingest_document(path, name)))
+
         elif ext in SUPPORTED_IMAGES:
-            vision_key = api_keys.get("gemini") or api_keys.get("openai")
-            vision_provider = "gemini" if api_keys.get("gemini") else "openai"
+            vision_provider, vision_key = _pick_vision_provider(keys)
             tasks.append(("image", ingest_image(
-                path, name, vision_key, vision_provider
+                path, name, vision_key, vision_provider or "groq"
             )))
+
         elif ext in SUPPORTED_AUDIO:
             from utils.audio_processor import process_audio_file
-            audio_key = api_keys.get("groq") or api_keys.get("openai")
-            audio_provider = "groq" if api_keys.get("groq") else "openai"
+            audio_provider, audio_key = _pick_audio_provider(keys)
             tasks.append(("audio", process_audio_file(
-                path, name, audio_key, audio_provider
+                path, name, audio_key, audio_provider or "groq"
             )))
+
         elif ext in SUPPORTED_VIDEO:
             from utils.video_processor import process_video_file
-            vision_key = api_keys.get("gemini") or api_keys.get("openai")
-            vision_provider = "gemini" if api_keys.get("gemini") else "openai"
-            # For video, we'd need audio transcript too, but process_video_file handles it
+            vision_provider, vision_key = _pick_vision_provider(keys)
+            audio_provider, audio_key = _pick_audio_provider(keys)
             tasks.append(("video", process_video_file(
-                path, name, vision_provider, vision_key
+                video_path=path,
+                source_name=name,
+                vision_provider=vision_provider,
+                vision_api_key=vision_key,
+                audio_provider=audio_provider,
+                audio_api_key=audio_key,
             )))
 
     # Execute tasks with progress tracking
