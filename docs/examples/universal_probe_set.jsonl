@@ -1,0 +1,28 @@
+# Universal probe set — works on ANY uploaded document, no labels needed.
+#
+# These 12 questions exercise the RAG pipeline against whatever the user has
+# loaded into the knowledge base. Because they intentionally omit
+# `expected_sources`, `expected_substrings`, and `gold_answer`, the retrieval
+# metrics (Hit@K, MRR, nDCG) and reference-based generation metrics
+# (BLEU, ROUGE) will report 0 — that is expected.
+#
+# The meaningful signal comes from the three reference-free metrics:
+#   • faithfulness         — is every claim supported by the retrieved chunks?
+#   • answer_relevancy     — does the answer address the question?
+#   • coverage             — are the cited sources real?
+#
+# Use this file as a quick health-check on any PDF/audio/video upload.
+# For corpus-specific accuracy, copy this file and add expected_* fields
+# tailored to your documents.
+{"id": "u01", "query": "What is this document primarily about? Provide a concise overview."}
+{"id": "u02", "query": "What are the main topics or sections covered in this document?"}
+{"id": "u03", "query": "List any specific names of people mentioned in this document, with citations."}
+{"id": "u04", "query": "Are there any specific dates, deadlines, years, or time references mentioned? Cite the source."}
+{"id": "u05", "query": "What companies, organizations, or institutions are referenced in this document?"}
+{"id": "u06", "query": "Summarize the key points or conclusions of this document in 3-5 sentences."}
+{"id": "u07", "query": "Are there any specific numbers, statistics, prices, or metrics mentioned? Cite them."}
+{"id": "u08", "query": "What contact information (email, phone, address, website) is provided in this document, if any?"}
+{"id": "u09", "query": "What action items, recommendations, next steps, or calls-to-action are mentioned?"}
+{"id": "u10", "query": "Are there any quotations, testimonials, or direct quotes? If yes, who said them and what did they say?"}
+{"id": "u11", "query": "Who is the intended audience for this document and why?"}
+{"id": "u12", "query": "Are there any technical terms, jargon, or acronyms used? Briefly explain them based on the context."}

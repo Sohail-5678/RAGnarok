@@ -134,21 +134,35 @@ After every assistant answer in the live chat, click **📈 Score this answer**.
 
 Results render as colored badges right under the message, with a judge-reasoning expander for transparency.
 
-### Option 2 — Offline harness (gold-set based)
+### Option 2 — Universal probe set (works on any upload, default in sidebar)
 
-1. Build a JSONL gold set (see schema in `evaluation/README.md`):
-   ```json
-   {"id": "q1", "query": "...", "expected_sources": ["file.pdf"],
-    "expected_substrings": ["key phrase"], "gold_answer": "..."}
-   ```
-2. Run:
-   ```bash
-   python -m evaluation.cli --dataset docs/examples/sample_dataset.jsonl
-   python -m evaluation.cli --dataset path/to/your.jsonl --ab rerank_on rerank_off
-   ```
-3. Reports land in `evaluation/reports/` as JSONL + JSON + Markdown.
+`docs/examples/universal_probe_set.jsonl` contains **12 generic probe questions** that exercise the pipeline against any document. Because it has no `expected_*` fields, **only the reference-free metrics are meaningful** (faithfulness, answer relevancy, citation coverage). Retrieval metrics will be 0 — that's intentional.
 
-### Option 3 — Persistent live logging
+```bash
+python -m evaluation.cli --dataset docs/examples/universal_probe_set.jsonl
+```
+
+Use this as a quick health-check after uploading any PDF/audio/video.
+
+### Option 3 — Corpus-specific gold set (most accurate)
+
+For real accuracy numbers tailored to *your* documents, write a small JSONL gold set:
+
+```json
+{"id": "q1", "query": "...", "expected_sources": ["file.pdf"],
+ "expected_substrings": ["key phrase"], "gold_answer": "..."}
+```
+
+Then:
+
+```bash
+python -m evaluation.cli --dataset path/to/your_gold.jsonl
+python -m evaluation.cli --dataset path/to/your_gold.jsonl --ab rerank_on rerank_off
+```
+
+Reports land in `evaluation/reports/` as JSONL + JSON + Markdown. See `evaluation/README.md` for the full schema.
+
+### Option 4 — Persistent live logging
 
 Enable the **"Persist queries to SQLite + JSONL"** toggle in the sidebar's 📊 Evaluation & Logging expander. Every chat turn is logged to `evaluation/logs/ragnarok_queries.db` + `…queries.jsonl` for offline analysis (these paths are git-ignored).
 
@@ -196,7 +210,8 @@ RAGnarok/
 │   └── test_evaluation.py
 └── docs/
     └── examples/
-        └── sample_dataset.jsonl # Example gold-set you can copy
+        ├── universal_probe_set.jsonl  # 12 generic questions, works on any PDF
+        └── sample_dataset.jsonl       # RAGnarok-specific gold set (schema demo)
 ```
 
 ## 🔐 Security & Privacy

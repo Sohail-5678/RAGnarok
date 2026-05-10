@@ -359,10 +359,18 @@ def _render_evaluation_section():
             st.caption("Logger unavailable.")
 
         st.markdown("**Run Evaluation Harness**")
-        default_ds = "docs/examples/sample_dataset.jsonl"
+        # Universal probe set works on ANY uploaded PDF/audio/video.
+        # Retrieval metrics will be 0 (no labels), but faithfulness +
+        # answer-relevancy + citation coverage are fully meaningful.
+        default_ds = "docs/examples/universal_probe_set.jsonl"
         ds_path = st.text_input(
             "Dataset path (JSONL)",
             value=default_ds,
+            help=(
+                "Default: 12 generic probe questions that work on any document. "
+                "For corpus-specific accuracy, write your own JSONL gold set "
+                "(see docs/examples/sample_dataset.jsonl for the schema)."
+            ),
             key="eval_dataset_path",
         )
 

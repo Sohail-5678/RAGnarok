@@ -35,13 +35,21 @@ JSONL, one example per line:
 * **`gold_answer`** enables BLEU / ROUGE / BERTScore. Optional.
 * **`modality_filter`** restricts retrieval to one modality. Optional.
 
-See `docs/examples/sample_dataset.jsonl` for a working example you can copy and adapt.
+## Two Bundled Example Datasets
+
+| File | Use it when… |
+|---|---|
+| `docs/examples/universal_probe_set.jsonl` | **You don't have a gold set yet.** 12 generic probe questions that work on any document. Retrieval metrics will be 0 (no labels); the meaningful scores are LLM-as-judge faithfulness + answer relevancy + citation coverage. This is the sidebar default. |
+| `docs/examples/sample_dataset.jsonl` | You want to see what a real, labelled gold set looks like. 5 hand-crafted questions about the RAGnarok project itself (will only score well if RAGnarok docs are in your KB). |
 
 ## Quick Start (CLI)
 
 ```bash
-# Default run on the example dataset
+# Universal probe set — works on any uploaded PDF/audio/video
 export GROQ_API_KEY="gsk_..."
+python -m evaluation.cli --dataset docs/examples/universal_probe_set.jsonl
+
+# Or use the schema-demo dataset
 python -m evaluation.cli --dataset docs/examples/sample_dataset.jsonl
 
 # A/B compare reranking on vs off
